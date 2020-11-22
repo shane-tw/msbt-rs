@@ -117,7 +117,6 @@ impl MsbtBuilder {
     let ptr = NonNull::new(msbt_ref as *mut Msbt).unwrap();
     if let Some(mut atr1) = msbt_ref.atr1.as_mut() {
       atr1.msbt = ptr;
-      atr1.update();
     }
     if let Some(lbl1) = msbt_ref.lbl1.as_mut() {
       lbl1.msbt = ptr;

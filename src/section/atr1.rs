@@ -1,7 +1,6 @@
 use crate::{
-  Encoding,
   Msbt,
-  traits::{CalculatesSize, Updates},
+  traits::CalculatesSize,
 };
 use super::Section;
 
@@ -11,23 +10,16 @@ use std::ptr::NonNull;
 pub struct Atr1 {
   pub(crate) msbt: NonNull<Msbt>,
   pub(crate) section: Section,
-  pub(crate) string_count: u32,
-  pub(crate) _unknown_1: u32,
-  pub(crate) strings: Vec<String>,
+  pub(crate) _unknown: Vec<u8>,
 }
 
 impl Atr1 {
-  pub fn new_unlinked<I, S>(string_count: u32, _unknown_1: u32, strings: I) -> Self
-    where I: IntoIterator<Item = S>,
-          S: Into<String>,
-  {
-    let strings: Vec<String> = strings.into_iter().map(Into::into).collect();
+  pub fn new_unlinked<V: Into<Vec<u8>>>(unknown_bytes: V) -> Self {
+    let bytes = unknown_bytes.into();
     Atr1 {
       msbt: NonNull::dangling(),
-      section: Section::new(*b"ATR1", 0),
-      string_count,
-      _unknown_1,
-      strings,
+      section: Section::new(*b"ATR1", bytes.len() as u32),
+      _unknown: bytes,
     }
   }
 
@@ -39,36 +31,13 @@ impl Atr1 {
     &self.section
   }
 
-  pub fn string_count(&self) -> u32 {
-    self.string_count
-  }
-
-  pub fn unknown_1(&self) -> u32 {
-    self._unknown_1
-  }
-
-  pub fn strings(&self) -> Vec<&str> {
-    self.strings.iter().map(AsRef::as_ref).collect()
-  }
-}
-
-impl Updates for Atr1 {
-  fn update(&mut self) {
-    let size = self.calc_size() - self.section.calc_size();
-    self.section.size = size as u32;
+  pub fn unknown_bytes(&self) -> &[u8] {
+    &self._unknown
   }
 }
 
 impl CalculatesSize for Atr1 {
   fn calc_size(&self) -> usize {
-    let multiplier = match self.msbt().header().encoding() {
-      Encoding::Utf8 => 1,
-      Encoding::Utf16 => 2,
-    };
-    self.section.calc_size()
-      + std::mem::size_of_val(&self.string_count)
-      + std::mem::size_of_val(&self._unknown_1)
-      + std::mem::size_of::<u32>() * self.strings.len() // offsets
-      + self.strings.iter().map(|x| x.as_bytes().len()).sum::<usize>() * multiplier // strings
+    self.section.calc_size() + self._unknown.len()
   }
 }
