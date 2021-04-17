@@ -31,7 +31,6 @@ const HEADER_MAGIC: [u8; 8] = *b"MsgStdBn";
 // const LABEL_MAX_LEN: u8 = 64;
 // const BYTE_ORDER_OFFSET: u8 = 0x8;
 // const HEADER_SIZE: u8 = 0x20;
-const PADDING_CHAR: u8 = 0xAB;
 const PADDING_LENGTH: usize = 16;
 
 #[derive(Debug, PartialEq)]
@@ -55,6 +54,7 @@ pub struct Msbt {
   pub(crate) atr1: Option<Atr1>,
   pub(crate) tsy1: Option<Tsy1>,
   pub(crate) txt2: Option<Txt2>,
+  pub(crate) pad_byte: u8,
 }
 
 impl Msbt {
@@ -135,9 +135,9 @@ impl Msbt {
   }
 
   fn plus_padding(size: usize) -> usize {
-    let rem = size % 16;
+    let rem = size % PADDING_LENGTH;
     if rem > 0 {
-      size + (16 - rem)
+      size + (PADDING_LENGTH - rem)
     } else {
       size
     }
@@ -315,7 +315,7 @@ impl<'a, W: Write> MsbtWriter<'a, W> {
       return Ok(());
     }
 
-    self.writer.write_all(&vec![PADDING_CHAR; PADDING_LENGTH - remainder]).map_err(Error::Io)
+    self.writer.write_all(&vec![self.msbt.pad_byte; PADDING_LENGTH - remainder]).map_err(Error::Io)
   }
 }
 
@@ -330,6 +330,7 @@ pub struct MsbtReader<R> {
   atr1: Option<Atr1>,
   tsy1: Option<Tsy1>,
   txt2: Option<Txt2>,
+  pad_byte: u8,
 }
 
 impl<R: Read + Seek> MsbtReader<R> {
@@ -346,6 +347,7 @@ impl<R: Read + Seek> MsbtReader<R> {
       tsy1: None,
       txt2: None,
       section_order: Vec::with_capacity(6),
+      pad_byte: 0,
     };
 
     msbt.read_sections()?;
@@ -363,6 +365,7 @@ impl<R: Read + Seek> MsbtReader<R> {
       atr1: self.atr1,
       tsy1: self.tsy1,
       txt2: self.txt2,
+      pad_byte: self.pad_byte,
     };
     let mut pinned_msbt = Box::pin(msbt);
 
@@ -394,17 +397,15 @@ impl<R: Read + Seek> MsbtReader<R> {
   }
 
   fn skip_padding(&mut self) -> Result<()> {
-    let mut buf = [0; 16];
-    loop {
-      let read = self.reader.read(&mut buf).map_err(Error::Io)?;
-      if read == 0 {
-        return Ok(());
-      }
-      if let Some(i) = buf[..read].iter().position(|&x| x != PADDING_CHAR) {
-        self.reader.seek(SeekFrom::Current(i as i64 - 16)).map_err(Error::Io)?;
-        return Ok(());
-      }
+    let pos = self.reader.stream_position().map_err(Error::Io)?;
+    let remainder = pos % PADDING_LENGTH as u64;
+    if remainder > 0 {
+      let mut buf = [0; 1];
+      self.reader.read_exact(&mut buf).map_err(Error::Io)?;
+      self.reader.seek(SeekFrom::Start(pos + PADDING_LENGTH as u64 - remainder)).map_err(Error::Io)?;
+      self.pad_byte = buf[0];
     }
+    Ok(())
   }
 
   pub fn read_sections(&mut self) -> Result<()> {
