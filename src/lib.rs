@@ -1,9 +1,7 @@
 use std::{
-  boxed::Box,
   collections::BTreeMap,
   io::{Read, Seek, SeekFrom, Write},
-  pin::Pin,
-  ptr::NonNull,
+  convert::TryFrom,
 };
 
 use byteordered::{Endianness, Endian};
@@ -47,8 +45,7 @@ pub enum SectionTag {
 pub struct Msbt {
   pub(crate) header: Header,
   pub(crate) section_order: Vec<SectionTag>,
-  // pinned because child labels have a reference to lbl1
-  pub(crate) lbl1: Option<Pin<Box<Lbl1>>>,
+  pub(crate) lbl1: Option<Lbl1>,
   pub(crate) nli1: Option<Nli1>,
   pub(crate) ato1: Option<Ato1>,
   pub(crate) atr1: Option<Atr1>,
@@ -58,7 +55,7 @@ pub struct Msbt {
 }
 
 impl Msbt {
-  pub fn from_reader<R: Read + Seek>(reader: R) -> Result<Pin<Box<Self>>> {
+  pub fn from_reader<R: Read + Seek>(reader: R) -> Result<Self> {
     MsbtReader::new(reader).map(MsbtReader::into_msbt)
   }
 
@@ -86,11 +83,11 @@ impl Msbt {
     &self.section_order
   }
 
-  pub fn lbl1(&self) -> Option<&Pin<Box<Lbl1>>> {
+  pub fn lbl1(&self) -> Option<&Lbl1> {
     self.lbl1.as_ref()
   }
 
-  pub fn lbl1_mut(&mut self) -> Option<Updater<Pin<Box<Lbl1>>>> {
+  pub fn lbl1_mut(&mut self) -> Option<Updater<Lbl1>> {
     self.lbl1.as_mut().map(Updater::new)
   }
 
@@ -145,8 +142,6 @@ impl Msbt {
 }
 
 impl CalculatesSize for Msbt {
-  // can't detect that Lbl1 is a Pin and has to be called in a redundant closure
-  #[allow(clippy::redundant_closure)]
   fn calc_size(&self) -> usize {
     self.header.calc_file_size()
       + Msbt::plus_padding(self.lbl1.as_ref().map(|x| x.calc_size()).unwrap_or(0))
@@ -187,10 +182,7 @@ impl<'a, W: Write> MsbtWriter<'a, W> {
     };
     self.writer.write_all(&endianness).map_err(Error::Io)?;
     self.msbt.header.endianness.write_u16(&mut self.writer, self.msbt.header._unknown_1).map_err(Error::Io)?;
-    let encoding_byte = match self.msbt.header.encoding {
-      Encoding::Utf8 => 0x00,
-      Encoding::Utf16 => 0x01,
-    };
+    let encoding_byte = self.msbt.header.encoding as u8;
     self.writer.write_all(&[encoding_byte, self.msbt.header._unknown_2]).map_err(Error::Io)?;
     self.msbt.header.endianness.write_u16(&mut self.writer, self.msbt.header.section_count).map_err(Error::Io)?;
     self.msbt.header.endianness.write_u16(&mut self.writer, self.msbt.header._unknown_3).map_err(Error::Io)?;
@@ -214,12 +206,12 @@ impl<'a, W: Write> MsbtWriter<'a, W> {
   fn write_lbl1(&mut self) -> Result<()> {
     if let Some(ref lbl1) = self.msbt.lbl1 {
       self.write_section(&lbl1.section)?;
-      self.msbt.header.endianness.write_u32(&mut self.writer, lbl1.group_count).map_err(Error::Io)?;
+      self.msbt.header.endianness.write_u32(&mut self.writer, lbl1.groups().len() as u32).map_err(Error::Io)?;
       for group in &lbl1.groups {
         self.write_group(group)?;
       }
       let mut sorted_labels = lbl1.labels.clone(); // FIXME: don't clone
-      sorted_labels.sort_by_key(|l| l.checksum);
+      sorted_labels.sort_by_key(|l| l.checksum(lbl1));
       for label in &sorted_labels {
         self.writer.write_all(&[label.name.len() as u8]).map_err(Error::Io)?;
         self.writer.write_all(label.name.as_bytes()).map_err(Error::Io)?;
@@ -255,18 +247,19 @@ impl<'a, W: Write> MsbtWriter<'a, W> {
       self.write_section(&txt2.section)?;
 
       // write string count
-      self.msbt.header.endianness.write_u32(&mut self.writer, txt2.string_count).map_err(Error::Io)?;
+      let value_count = txt2.values.len() as u32;
+      self.msbt.header.endianness.write_u32(&mut self.writer, value_count).map_err(Error::Io)?;
 
       // write offsets
       let mut total = 0;
-      for s in &txt2.raw_strings {
-        let offset = txt2.string_count * 4 + 4 + total;
+      for s in &txt2.values {
+        let offset = value_count * 4 + 4 + total;
         total += s.len() as u32;
         self.msbt.header.endianness.write_u32(&mut self.writer, offset).map_err(Error::Io)?;
       }
 
       // write strings
-      for s in &txt2.raw_strings {
+      for s in &txt2.values {
         self.writer.write_all(&s).map_err(Error::Io)?;
       }
 
@@ -324,7 +317,7 @@ pub struct MsbtReader<R> {
   reader: R,
   section_order: Vec<SectionTag>,
   header: Header,
-  lbl1: Option<Pin<Box<Lbl1>>>,
+  lbl1: Option<Lbl1>,
   nli1: Option<Nli1>,
   ato1: Option<Ato1>,
   atr1: Option<Atr1>,
@@ -355,7 +348,7 @@ impl<R: Read + Seek> MsbtReader<R> {
     Ok(msbt)
   }
 
-  fn into_msbt(self) -> Pin<Box<Msbt>> {
+  fn into_msbt(self) -> Msbt {
     let msbt = Msbt {
       header: self.header,
       section_order: self.section_order,
@@ -367,33 +360,8 @@ impl<R: Read + Seek> MsbtReader<R> {
       txt2: self.txt2,
       pad_byte: self.pad_byte,
     };
-    let mut pinned_msbt = Box::pin(msbt);
 
-    let msbt_ref: &mut Msbt = unsafe {
-      let mut_ref: Pin<&mut Msbt> = Pin::as_mut(&mut pinned_msbt);
-      Pin::get_unchecked_mut(mut_ref)
-    };
-    let ptr = NonNull::new(msbt_ref as *mut Msbt).unwrap();
-    if let Some(lbl1) = msbt_ref.lbl1.as_mut() {
-      lbl1.msbt = ptr;
-    }
-    if let Some(mut nli1) = msbt_ref.nli1.as_mut() {
-      nli1.msbt = ptr;
-    }
-    if let Some(mut ato1) = msbt_ref.ato1.as_mut() {
-      ato1.msbt = ptr;
-    }
-    if let Some(mut atr1) = msbt_ref.atr1.as_mut() {
-      atr1.msbt = ptr;
-    }
-    if let Some(mut tsy1) = msbt_ref.tsy1.as_mut() {
-      tsy1.msbt = ptr;
-    }
-    if let Some(mut txt2) = msbt_ref.txt2.as_mut() {
-      txt2.msbt = ptr;
-    }
-
-    pinned_msbt
+    msbt
   }
 
   fn skip_padding(&mut self) -> Result<()> {
@@ -451,7 +419,7 @@ impl<R: Read + Seek> MsbtReader<R> {
     }
   }
 
-  pub fn read_lbl1(&mut self) -> Result<Pin<Box<Lbl1>>> {
+  pub fn read_lbl1(&mut self) -> Result<Lbl1> {
     let section = self.read_section()?;
 
     if &section.magic != b"LBL1" {
@@ -469,45 +437,29 @@ impl<R: Read + Seek> MsbtReader<R> {
     let mut labels = Vec::with_capacity(groups.iter().map(|x| x.label_count as usize).sum());
 
     let mut buf = [0; 1];
-    for (i, group) in groups.iter().enumerate() {
+    for group in groups.iter() {
       for _ in 0..group.label_count {
         self.reader.read_exact(&mut buf).map_err(Error::Io)?;
         let str_len = buf[0] as usize;
-
         let mut str_buf = vec![0; str_len];
         self.reader.read_exact(&mut str_buf).map_err(Error::Io)?;
         let name = String::from_utf8(str_buf).map_err(Error::InvalidUtf8)?;
         let index = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
-        let checksum = i as u32;
 
         labels.push(Label {
-          lbl1: NonNull::dangling(),
           name,
           index,
-          checksum,
         });
       }
     }
 
     let lbl1 = Lbl1 {
-      msbt: NonNull::dangling(),
       section,
-      group_count,
       groups,
       labels,
     };
-    let mut pinned_lbl1 = Box::pin(lbl1);
 
-    let lbl1_ref: &mut Lbl1 = unsafe {
-      let mut_ref: Pin<&mut Lbl1> = Pin::as_mut(&mut pinned_lbl1);
-      Pin::get_unchecked_mut(mut_ref)
-    };
-    let ptr = NonNull::new(lbl1_ref as *mut Lbl1).unwrap();
-    for mut label in &mut lbl1_ref.labels {
-      label.lbl1 = ptr;
-    }
-
-    Ok(pinned_lbl1)
+    Ok(lbl1)
   }
 
   pub fn read_atr1(&mut self) -> Result<Atr1> {
@@ -516,7 +468,6 @@ impl<R: Read + Seek> MsbtReader<R> {
     self.reader.read_exact(&mut unknown).map_err(Error::Io)?;
 
     Ok(Atr1 {
-      msbt: NonNull::dangling(),
       section,
       _unknown: unknown,
     })
@@ -528,7 +479,6 @@ impl<R: Read + Seek> MsbtReader<R> {
     self.reader.read_exact(&mut unknown).map_err(Error::Io)?;
 
     Ok(Ato1 {
-      msbt: NonNull::dangling(),
       section,
       _unknown: unknown,
     })
@@ -540,7 +490,6 @@ impl<R: Read + Seek> MsbtReader<R> {
     self.reader.read_exact(&mut unknown).map_err(Error::Io)?;
 
     Ok(Tsy1 {
-      msbt: NonNull::dangling(),
       section,
       _unknown: unknown,
     })
@@ -551,7 +500,7 @@ impl<R: Read + Seek> MsbtReader<R> {
     let string_count = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)? as usize;
 
     let mut offsets = Vec::with_capacity(string_count);
-    let mut raw_strings = Vec::with_capacity(string_count);
+    let mut values = Vec::with_capacity(string_count);
 
     for _ in 0..string_count {
       offsets.push(self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?);
@@ -566,14 +515,12 @@ impl<R: Read + Seek> MsbtReader<R> {
       let str_len = next_str_end - offsets[i];
       let mut str_buf = vec![0; str_len as usize];
       self.reader.read_exact(&mut str_buf).map_err(Error::Io)?;
-      raw_strings.push(str_buf);
+      values.push(str_buf);
     }
 
     Ok(Txt2 {
-      msbt: NonNull::dangling(),
       section,
-      string_count: string_count as u32,
-      raw_strings,
+      values,
     })
   }
 
@@ -594,7 +541,6 @@ impl<R: Read + Seek> MsbtReader<R> {
     }
 
     Ok(Nli1 {
-      msbt: NonNull::dangling(),
       section,
       id_count,
       global_ids: map,
@@ -652,31 +598,23 @@ impl Header {
     }
 
     reader.read_exact(&mut buf[..2]).map_err(Error::Io)?;
-
-    let endianness = if buf[..2] == [0xFE, 0xFF] {
-      Endianness::Big
-    } else if buf[..2] == [0xFF, 0xFE] {
-      Endianness::Little
-    } else {
-      return Err(Error::InvalidBom);
+    let endianness = match buf[..2] {
+      [0xFE, 0xFF] => Endianness::Big,
+      [0xFF, 0xFE] => Endianness::Little,
+      _ => return Err(Error::InvalidBom),
     };
 
     let unknown_1 = endianness.read_u16(&mut reader).map_err(Error::Io)?;
 
     reader.read_exact(&mut buf[..1]).map_err(Error::Io)?;
-    let encoding = match buf[0] {
-      0x00 => Encoding::Utf8,
-      0x01 => Encoding::Utf16,
-      x => return Err(Error::InvalidEncoding(x)),
-    };
+    let encoding = Encoding::try_from(buf[0])
+      .map_err(|_| Error::InvalidEncoding(buf[0]))?;
 
     reader.read_exact(&mut buf[..1]).map_err(Error::Io)?;
     let unknown_2 = buf[0];
 
     let section_count = endianness.read_u16(&mut reader).map_err(Error::Io)?;
-
     let unknown_3 = endianness.read_u16(&mut reader).map_err(Error::Io)?;
-
     let file_size = endianness.read_u32(&mut reader).map_err(Error::Io)?;
 
     reader.read_exact(&mut buf[..10]).map_err(Error::Io)?;
@@ -750,3 +688,14 @@ pub enum Encoding {
   Utf16 = 0x01,
 }
 
+impl std::convert::TryFrom<u8> for Encoding {
+  type Error = ();
+
+  fn try_from(value: u8) -> std::result::Result<Encoding, ()> {
+      Ok(match value {
+        0x00 => Encoding::Utf8,
+        0x01 => Encoding::Utf16,
+        _ => return Err(()),
+      })
+  }
+}

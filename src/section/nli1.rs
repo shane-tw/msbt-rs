@@ -1,17 +1,10 @@
-use crate::{
-  Msbt,
-  traits::CalculatesSize,
-};
+use crate::traits::CalculatesSize;
 use super::Section;
 
-use std::{
-  collections::BTreeMap,
-  ptr::NonNull,
-};
+use std::{collections::BTreeMap};
 
 #[derive(Debug)]
 pub struct Nli1 {
-  pub(crate) msbt: NonNull<Msbt>,
   pub(crate) section: Section,
   pub(crate) id_count: u32,
   pub(crate) global_ids: BTreeMap<u32, u32>,
@@ -21,15 +14,10 @@ impl Nli1 {
   pub fn new_unlinked(id_count: u32, global_ids: BTreeMap<u32, u32>) -> Self {
     let size = std::mem::size_of_val(&id_count) + std::mem::size_of::<u32>() * 2 * global_ids.len();
     Nli1 {
-      msbt: NonNull::dangling(),
       section: Section::new(*b"NLI1", size as u32),
       id_count,
       global_ids,
     }
-  }
-
-  pub fn msbt(&self) -> &Msbt {
-    unsafe { self.msbt.as_ref() }
   }
 
   pub fn section(&self) -> &Section {
