@@ -3,7 +3,7 @@ use super::Section;
 
 use std::{collections::BTreeMap};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Nli1 {
   pub(crate) section: Section,
   pub(crate) id_count: u32,

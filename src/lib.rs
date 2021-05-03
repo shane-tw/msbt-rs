@@ -31,7 +31,7 @@ const HEADER_MAGIC: [u8; 8] = *b"MsgStdBn";
 // const HEADER_SIZE: u8 = 0x20;
 const PADDING_LENGTH: usize = 16;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SectionTag {
   Lbl1,
   Nli1,
@@ -41,7 +41,7 @@ pub enum SectionTag {
   Txt2,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Msbt {
   pub(crate) header: Header,
   pub(crate) section_order: Vec<SectionTag>,
@@ -56,7 +56,7 @@ pub struct Msbt {
 
 impl Msbt {
   pub fn from_reader<R: Read + Seek>(reader: R) -> Result<Self> {
-    MsbtReader::new(reader).map(MsbtReader::into_msbt)
+    MsbtReader::new(reader).and_then(|m| Ok(m.msbt))
   }
 
   pub fn write_to<W: Write>(&self, writer: W) -> Result<()> {
@@ -312,53 +312,31 @@ impl<'a, W: Write> MsbtWriter<'a, W> {
 #[derive(Debug)]
 pub struct MsbtReader<R> {
   reader: R,
-  section_order: Vec<SectionTag>,
-  header: Header,
-  lbl1: Option<Lbl1>,
-  nli1: Option<Nli1>,
-  ato1: Option<Ato1>,
-  atr1: Option<Atr1>,
-  tsy1: Option<Tsy1>,
-  txt2: Option<Txt2>,
-  pad_byte: u8,
+  msbt: Msbt,
 }
 
-impl<R: Read + Seek> MsbtReader<R> {
+impl<'a, R: Read + Seek> MsbtReader<R> {
   fn new(mut reader: R) -> Result<Self> {
     let header = Header::from_reader(&mut reader)?;
 
     let mut msbt = MsbtReader {
       reader,
-      header,
-      lbl1: None,
-      nli1: None,
-      ato1: None,
-      atr1: None,
-      tsy1: None,
-      txt2: None,
-      section_order: Vec::with_capacity(6),
-      pad_byte: 0,
+      msbt: Msbt{
+        header,
+        lbl1: None,
+        nli1: None,
+        ato1: None,
+        atr1: None,
+        tsy1: None,
+        txt2: None,
+        section_order: Vec::with_capacity(6),
+        pad_byte: 0,
+      }
     };
 
     msbt.read_sections()?;
 
     Ok(msbt)
-  }
-
-  fn into_msbt(self) -> Msbt {
-    let msbt = Msbt {
-      header: self.header,
-      section_order: self.section_order,
-      lbl1: self.lbl1,
-      nli1: self.nli1,
-      ato1: self.ato1,
-      atr1: self.atr1,
-      tsy1: self.tsy1,
-      txt2: self.txt2,
-      pad_byte: self.pad_byte,
-    };
-
-    msbt
   }
 
   fn skip_padding(&mut self) -> Result<()> {
@@ -368,7 +346,7 @@ impl<R: Read + Seek> MsbtReader<R> {
       let mut buf = [0; 1];
       self.reader.read_exact(&mut buf).map_err(Error::Io)?;
       self.reader.seek(SeekFrom::Start(pos + PADDING_LENGTH as u64 - remainder)).map_err(Error::Io)?;
-      self.pad_byte = buf[0];
+      self.msbt.pad_byte = buf[0];
     }
     Ok(())
   }
@@ -386,28 +364,28 @@ impl<R: Read + Seek> MsbtReader<R> {
 
       match &peek {
         b"LBL1" => {
-          self.lbl1 = Some(self.read_lbl1()?);
-          self.section_order.push(SectionTag::Lbl1);
+          self.msbt.lbl1 = Some(self.read_lbl1()?);
+          self.msbt.section_order.push(SectionTag::Lbl1);
         },
         b"ATR1" => {
-          self.atr1 = Some(self.read_atr1()?);
-          self.section_order.push(SectionTag::Atr1);
+          self.msbt.atr1 = Some(self.read_atr1()?);
+          self.msbt.section_order.push(SectionTag::Atr1);
         },
         b"ATO1" => {
-          self.ato1 = Some(self.read_ato1()?);
-          self.section_order.push(SectionTag::Ato1);
+          self.msbt.ato1 = Some(self.read_ato1()?);
+          self.msbt.section_order.push(SectionTag::Ato1);
         },
         b"TSY1" => {
-          self.tsy1 = Some(self.read_tsy1()?);
-          self.section_order.push(SectionTag::Tsy1);
+          self.msbt.tsy1 = Some(self.read_tsy1()?);
+          self.msbt.section_order.push(SectionTag::Tsy1);
         },
         b"TXT2" => {
-          self.txt2 = Some(self.read_txt2()?);
-          self.section_order.push(SectionTag::Txt2);
+          self.msbt.txt2 = Some(self.read_txt2()?);
+          self.msbt.section_order.push(SectionTag::Txt2);
         },
         b"NLI1" => {
-          self.nli1 = Some(self.read_nli1()?);
-          self.section_order.push(SectionTag::Nli1);
+          self.msbt.nli1 = Some(self.read_nli1()?);
+          self.msbt.section_order.push(SectionTag::Nli1);
         },
         _ => return Err(Error::InvalidSection(peek)),
       }
@@ -423,7 +401,7 @@ impl<R: Read + Seek> MsbtReader<R> {
       return Err(Error::InvalidMagic);
     }
 
-    let group_count = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
+    let group_count = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
     let mut groups = Vec::with_capacity(group_count as usize);
     for _ in 0..group_count {
       groups.push(self.read_group()?);
@@ -440,7 +418,7 @@ impl<R: Read + Seek> MsbtReader<R> {
         let mut str_buf = vec![0; str_len];
         self.reader.read_exact(&mut str_buf).map_err(Error::Io)?;
         let name = String::from_utf8(str_buf).map_err(Error::InvalidUtf8)?;
-        let index = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
+        let index = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
         labels[index as usize] = Label{ name };
       }
     }
@@ -489,13 +467,13 @@ impl<R: Read + Seek> MsbtReader<R> {
 
   pub fn read_txt2(&mut self) -> Result<Txt2> {
     let section = self.read_section()?;
-    let string_count = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)? as usize;
+    let string_count = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)? as usize;
 
     let mut offsets = Vec::with_capacity(string_count);
     let mut values = Vec::with_capacity(string_count);
 
     for _ in 0..string_count {
-      offsets.push(self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?);
+      offsets.push(self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?);
     }
 
     for i in 0..string_count {
@@ -523,11 +501,11 @@ impl<R: Read + Seek> MsbtReader<R> {
     let mut id_count = 0;
 
     if section.size > 0 {
-      id_count = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
+      id_count = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
 
       for _ in 0..id_count {
-        let val = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
-        let key = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
+        let val = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
+        let key = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
         map.insert(key, val);
       }
     }
@@ -540,8 +518,8 @@ impl<R: Read + Seek> MsbtReader<R> {
   }
 
   pub fn read_group(&mut self) -> Result<Group> {
-    let label_count = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
-    let offset = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
+    let label_count = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
+    let offset = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
 
     Ok(Group {
       label_count,
@@ -554,7 +532,7 @@ impl<R: Read + Seek> MsbtReader<R> {
     let mut padding = [0; 8];
 
     self.reader.read_exact(&mut magic).map_err(Error::Io)?;
-    let size = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
+    let size = self.msbt.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
     self.reader.read_exact(&mut padding).map_err(Error::Io)?;
 
     Ok(Section {
@@ -565,7 +543,7 @@ impl<R: Read + Seek> MsbtReader<R> {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Header {
   pub(crate) magic: [u8; 8],
   pub(crate) endianness: Endianness,

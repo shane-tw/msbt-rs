@@ -3,7 +3,7 @@ use crate::{
 };
 use super::Section;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Lbl1 {
   pub(crate) section: Section,
   pub(crate) groups: Vec<Group>,
@@ -44,7 +44,7 @@ impl Lbl1 {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Group {
   pub(crate) label_count: u32,
   pub(crate) offset: u32,

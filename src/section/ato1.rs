@@ -1,7 +1,7 @@
 use crate::traits::CalculatesSize;
 use super::Section;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Ato1 {
   pub(crate) section: Section,
   pub(crate) _unknown: Vec<u8>, // large collection of 0xFF

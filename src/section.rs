@@ -14,7 +14,7 @@ pub use self::{
   txt2::Txt2,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Section {
   pub magic: [u8; 4],
   pub size: u32,

@@ -1,7 +1,7 @@
 use crate::traits::CalculatesSize;
 use super::Section;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tsy1 {
   pub(crate) section: Section,
   pub(crate) _unknown: Vec<u8>, // tons of unknown data

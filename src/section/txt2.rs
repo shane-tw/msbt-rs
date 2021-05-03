@@ -1,7 +1,7 @@
 use crate::traits::{CalculatesSize, Updates};
 use super::Section;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Txt2 {
   pub(crate) section: Section,
   pub(crate) values: Vec<Vec<u8>>,
