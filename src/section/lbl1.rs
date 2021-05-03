@@ -63,7 +63,6 @@ impl Group {
 #[derive(Debug, Clone)]
 pub struct Label {
   pub(crate) name: String,
-  pub(crate) index: u32,
 }
 
 impl Label {
@@ -77,10 +76,6 @@ impl Label {
     where S: Into<String>,
   {
     self.name = name.into();
-  }
-
-  pub fn index(&self) -> u32 {
-    self.index
   }
 
   pub fn checksum(&self, lbl1: &Lbl1) -> u32 {
@@ -100,7 +95,7 @@ impl Updates for Lbl1 {
 impl CalculatesSize for Lbl1 {
   fn calc_size(&self) -> usize {
     self.section.calc_size()
-      + std::mem::size_of_val(&self.groups.len())
+      + std::mem::size_of::<u32>() // group count
       + self.groups.iter().map(&CalculatesSize::calc_size).sum::<usize>()
       + self.labels.iter().map(&CalculatesSize::calc_size).sum::<usize>()
   }
@@ -116,6 +111,6 @@ impl CalculatesSize for Label {
   fn calc_size(&self) -> usize {
     std::mem::size_of::<u8>() // name length
       + self.name.as_bytes().len()
-      + std::mem::size_of_val(&self.index)
+      + std::mem::size_of::<u32>() // index
   }
 }

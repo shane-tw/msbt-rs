@@ -155,7 +155,6 @@ impl CalculatesSize for Msbt {
 
 impl Updates for Msbt {
   fn update(&mut self) {
-    self.header.file_size = self.calc_size() as u32;
     self.header.section_count = self.section_order.len() as u16;
   }
 }
@@ -187,8 +186,6 @@ impl<'a, W: Write> MsbtWriter<'a, W> {
     self.msbt.header.endianness.write_u16(&mut self.writer, self.msbt.header.section_count).map_err(Error::Io)?;
     self.msbt.header.endianness.write_u16(&mut self.writer, self.msbt.header._unknown_3).map_err(Error::Io)?;
     self.msbt.header.endianness.write_u32(&mut self.writer, self.msbt.calc_size() as u32).map_err(Error::Io)?;
-    // FIXME: update this as changes are made
-    // self.msbt.header.endianness.write_u32(&mut self.writer, self.msbt.header.file_size).map_err(Error::Io)?;
     self.writer.write_all(&self.msbt.header.padding).map_err(Error::Io)
   }
 
@@ -210,12 +207,12 @@ impl<'a, W: Write> MsbtWriter<'a, W> {
       for group in &lbl1.groups {
         self.write_group(group)?;
       }
-      let mut sorted_labels = lbl1.labels.clone(); // FIXME: don't clone
-      sorted_labels.sort_by_key(|l| l.checksum(lbl1));
-      for label in &sorted_labels {
+      let mut sorted_labels: Vec<(usize, &Label)> = lbl1.labels.iter().enumerate().collect();
+      sorted_labels.sort_by_key(|(_,l)| l.checksum(lbl1));
+      for (i, label) in &sorted_labels {
         self.writer.write_all(&[label.name.len() as u8]).map_err(Error::Io)?;
         self.writer.write_all(label.name.as_bytes()).map_err(Error::Io)?;
-        self.msbt.header.endianness.write_u32(&mut self.writer, label.index).map_err(Error::Io)?;
+        self.msbt.header.endianness.write_u32(&mut self.writer, *i as u32).map_err(Error::Io)?;
       }
 
       self.write_padding()?;
@@ -427,14 +424,13 @@ impl<R: Read + Seek> MsbtReader<R> {
     }
 
     let group_count = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
-
     let mut groups = Vec::with_capacity(group_count as usize);
-
     for _ in 0..group_count {
       groups.push(self.read_group()?);
     }
 
-    let mut labels = Vec::with_capacity(groups.iter().map(|x| x.label_count as usize).sum());
+    let label_count = groups.iter().map(|x| x.label_count as usize).sum();
+    let mut labels = vec![Label{name: "".to_string()}; label_count];
 
     let mut buf = [0; 1];
     for group in groups.iter() {
@@ -445,11 +441,7 @@ impl<R: Read + Seek> MsbtReader<R> {
         self.reader.read_exact(&mut str_buf).map_err(Error::Io)?;
         let name = String::from_utf8(str_buf).map_err(Error::InvalidUtf8)?;
         let index = self.header.endianness.read_u32(&mut self.reader).map_err(Error::Io)?;
-
-        labels.push(Label {
-          name,
-          index,
-        });
+        labels[index as usize] = Label{ name };
       }
     }
 
@@ -582,7 +574,6 @@ pub struct Header {
   pub(crate) _unknown_2: u8,
   pub(crate) section_count: u16,
   pub(crate) _unknown_3: u16,
-  pub(crate) file_size: u32,
   pub(crate) padding: [u8; 10],
 }
 
@@ -615,7 +606,7 @@ impl Header {
 
     let section_count = endianness.read_u16(&mut reader).map_err(Error::Io)?;
     let unknown_3 = endianness.read_u16(&mut reader).map_err(Error::Io)?;
-    let file_size = endianness.read_u32(&mut reader).map_err(Error::Io)?;
+    let _file_size = endianness.read_u32(&mut reader).map_err(Error::Io)?;
 
     reader.read_exact(&mut buf[..10]).map_err(Error::Io)?;
     let padding = buf;
@@ -625,7 +616,6 @@ impl Header {
       endianness,
       encoding,
       section_count,
-      file_size,
       padding,
       _unknown_1: unknown_1,
       _unknown_2: unknown_2,
@@ -661,10 +651,6 @@ impl Header {
     self._unknown_3
   }
 
-  pub fn file_size(&self) -> u32 {
-    self.file_size
-  }
-
   pub fn padding(&self) -> [u8; 10] {
     self.padding
   }
@@ -677,7 +663,7 @@ impl Header {
       + std::mem::size_of_val(&self._unknown_2)
       + std::mem::size_of_val(&self.section_count)
       + std::mem::size_of_val(&self._unknown_3)
-      + std::mem::size_of_val(&self.file_size)
+      + std::mem::size_of::<u32>() // file size
       + std::mem::size_of_val(&self.padding)
   }
 }

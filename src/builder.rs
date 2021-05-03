@@ -53,7 +53,7 @@ impl MsbtBuilder {
       });
     let txt2 = group_count.map(|_| Txt2 {
       section: Section::new(*b"TXT2", 0),
-      values: Vec::new(),
+      values: vec![],
     });
     let (section_count, section_order) = if group_count.is_some() {
       let mut order = Vec::with_capacity(6);
@@ -73,7 +73,6 @@ impl MsbtBuilder {
         _unknown_2: 3,
         section_count,
         _unknown_3: 0,
-        file_size: 0,
         padding: [0; 10],
       },
       lbl1,
@@ -130,7 +129,6 @@ impl MsbtBuilder {
 
     let label = crate::section::lbl1::Label {
       name,
-      index: txt2.values().len() as u32,
     };
 
     txt2.values.push(value);
