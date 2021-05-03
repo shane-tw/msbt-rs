@@ -11,10 +11,6 @@ fn main() {
 
     let msbt = Msbt::from_reader(f).unwrap();
 
-    for group in msbt.lbl1().unwrap().groups() {
-      println!("group: {:?}", group);
-    }
-
     let new_f = BufWriter::new(File::create(format!("{}-new", arg)).unwrap());
 
     msbt.write_to(new_f).unwrap();

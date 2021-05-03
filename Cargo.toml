@@ -9,6 +9,7 @@ byteordered = "0.4"
 thiserror = "1"
 serde = { version = "1", optional = true }
 serde_derive = { version = "1", optional = true }
+hex = "0.4.3"
 
 [features]
 serde_support = ["serde", "serde_derive"]
