@@ -5,6 +5,7 @@ use crate::{
   SectionTag,
   section::*,
   traits::Updates,
+  txt2::Token,
 };
 
 use byteordered::Endianness;
@@ -114,7 +115,7 @@ impl MsbtBuilder {
     msbt
   }
 
-  pub fn add_label<N: Into<String>, V: Into<Vec<u8>>>(mut self, name: N, value: V) -> Self {
+  pub fn add_label<N: Into<String>, V: Into<Vec<Token>>>(mut self, name: N, value: V) -> Self {
     let name = name.into();
     let value = value.into();
 

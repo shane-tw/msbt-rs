@@ -257,7 +257,9 @@ impl<'a, W: Write> MsbtWriter<'a, W> {
 
       // write strings
       for s in &txt2.values {
-        self.writer.write_all(&s).map_err(Error::Io)?;
+        let value_bytes = s.iter()
+          .flat_map(|vv| vv.to_bytes()).collect::<Vec<u8>>();
+        self.writer.write_all(&value_bytes).map_err(Error::Io)?;
       }
 
       self.write_padding()?;
@@ -485,7 +487,7 @@ impl<'a, R: Read + Seek> MsbtReader<R> {
       let str_len = next_str_end - offsets[i];
       let mut str_buf = vec![0; str_len as usize];
       self.reader.read_exact(&mut str_buf).map_err(Error::Io)?;
-      values.push(str_buf);
+      values.push(txt2::parse_bytes(&str_buf));
     }
 
     Ok(Txt2 {
