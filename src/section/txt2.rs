@@ -62,7 +62,6 @@ pub fn parse_bytes(bytes: &[u8]) -> Vec<Token> {
       TAG_END => tokens.push(Token::TagEnd),
       0x00 => {
         // Some games e.g. mario & luigi have null bytes in text
-        rdr.seek(std::io::SeekFrom::Current(-2)).unwrap();
         let mut padding_end = Vec::new();
         rdr.read_to_end(&mut padding_end).unwrap();
         tokens.push(Token::Padding(padding_end));
