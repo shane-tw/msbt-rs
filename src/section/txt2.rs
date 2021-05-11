@@ -68,10 +68,14 @@ pub fn parse_bytes(bytes: &[u8]) -> Vec<Token> {
         tokens.push(Token::Padding(padding_end));
       },
       _ => {
-        match tokens.get(tokens.len() - 1) {
-          Some(Token::Text(_)) => (),
-          _ => tokens.push(Token::Text(Vec::new()))
-        };
+        if tokens.len() == 0 {
+          tokens.push(Token::Text(Vec::new()));
+        } else {
+          match tokens.get(tokens.len() - 1) {
+            Some(Token::Text(_)) => (),
+            _ => tokens.push(Token::Text(Vec::new()))
+          };
+        }
         let last_i = tokens.len() - 1;
         if let Some(Token::Text(ref mut b)) = tokens.get_mut(last_i) {
           b.extend(&byte.to_le_bytes());
