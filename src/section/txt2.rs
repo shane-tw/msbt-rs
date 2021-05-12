@@ -1,6 +1,6 @@
 use crate::traits::{CalculatesSize, Updates};
 use super::Section;
-use std::io::{Read, Seek, Cursor};
+use std::io::{Read, Cursor};
 
 pub const TAG_START: u16 = 0x0E;
 pub const TAG_END: u16 = 0x0F;
